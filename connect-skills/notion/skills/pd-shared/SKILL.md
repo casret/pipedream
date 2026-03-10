@@ -44,7 +44,7 @@ The env var name is `PIPEDREAM_ACCOUNT_ID_` + the app slug in UPPER_SNAKE_CASE.
 
 ## Running CLI Tools
 
-The tools are in the `resources/` directory alongside this skill:
+Run all commands from **the skill's directory** (the directory containing the SKILL.md you're reading):
 
 ```bash
 npx tsx resources/pd-<app>.ts <command> [--flag value]
@@ -54,56 +54,51 @@ Output is JSON. Errors go to stderr. `--limit N` controls pagination.
 
 ## Generic Proxy — Making Any API Call
 
-If the CLI tools don't cover an API endpoint you need, you can call any API directly through the Pipedream Connect proxy. The proxy handles authentication automatically — it injects the user's OAuth token or API key into the upstream request.
+If the CLI tools don't cover an API endpoint you need, you can call any API directly through the Pipedream Connect proxy. The proxy handles authentication automatically.
 
-### How It Works
+### Writing a one-off script (IMPORTANT)
 
-The proxy URL pattern is:
+Scripts that use `makeProxyRequest` **must be saved inside the `resources/` directory** of a skill — that directory has a `package.json` with `"type": "module"` which is required for top-level `await` to work. Scripts placed in `/tmp/` or elsewhere, or using `npx tsx -e`, **will fail** with a CJS error.
 
-```
-POST|GET|PUT|PATCH|DELETE
-https://api.pipedream.com/v1/connect/{project_id}/proxy/{base64_url}
-  ?external_user_id={user_id}
-  &account_id={apn_xxx}
-```
-
-Where `{base64_url}` is the target API URL encoded as URL-safe Base64.
-
-### Quick Reference: curl
+**Correct pattern:**
 
 ```bash
-# 1. Get a bearer token (skip if you have PIPEDREAM_TOKEN)
-TOKEN=$(curl -s -X POST https://api.pipedream.com/v1/oauth/token \
-  -H "Content-Type: application/json" \
-  -d "{\"grant_type\":\"client_credentials\",\"client_id\":\"$PIPEDREAM_CLIENT_ID\",\"client_secret\":\"$PIPEDREAM_CLIENT_SECRET\"}" \
-  | python3 -c "import sys,json;print(json.load(sys.stdin)['access_token'])")
-
-# 2. Base64-encode the target URL
-URL64=$(echo -n "https://slack.com/api/chat.postMessage" | base64 -w0 | tr '+/' '-_' | tr -d '=')
-
-# 3. Make the proxied request
-curl -X POST "https://api.pipedream.com/v1/connect/$PIPEDREAM_PROJECT_ID/proxy/$URL64?external_user_id=$PIPEDREAM_EXTERNAL_USER_ID&account_id=apn_xxx" \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "x-pd-environment: $PIPEDREAM_ENVIRONMENT" \
-  -H "Content-Type: application/json" \
-  -d '{"channel": "C0123456789", "text": "Hello!"}'
-```
-
-### Quick Reference: Node.js / TypeScript
-
-You can import the proxy engine directly from `resources/pd-proxy.ts`:
-
-```typescript
-import { makeProxyRequest } from "./resources/pd-proxy.js";
-
-// GET request
-const channels = await makeProxyRequest({
+# 1. Write the script INTO the resources/ directory of any pd-* skill
+cat > resources/_custom.ts << 'EOF'
+import { makeProxyRequest } from "./pd-proxy.js";
+const resp = await makeProxyRequest({
   appSlug: "slack_v2",
   method: "GET",
-  url: "https://slack.com/api/conversations.list?limit=100",
+  url: "https://slack.com/api/users.getPresence?user=U12345",
+});
+console.log(JSON.stringify(resp, null, 2));
+EOF
+
+# 2. Run it from the skill directory
+npx tsx resources/_custom.ts
+
+# 3. Clean up
+rm resources/_custom.ts
+```
+
+**Common mistakes that will NOT work:**
+- `npx tsx -e 'import ...; await ...'` — fails (CJS mode, no top-level await)
+- Writing to `/tmp/script.ts` and importing from skill dir — fails (wrong module context)
+- `node -e '...'` — fails (no TypeScript, no ESM)
+
+### makeProxyRequest API
+
+```typescript
+import { makeProxyRequest } from "./pd-proxy.js";
+
+// GET
+const result = await makeProxyRequest({
+  appSlug: "slack_v2",    // app slug (determines which account to use)
+  method: "GET",
+  url: "https://slack.com/api/emoji.list",
 });
 
-// POST request with body
+// POST with body
 const result = await makeProxyRequest({
   appSlug: "github",
   method: "POST",
@@ -111,8 +106,8 @@ const result = await makeProxyRequest({
   body: { title: "Bug report", body: "Details..." },
 });
 
-// Request with custom headers (forwarded to upstream via x-pd-proxy- prefix)
-const page = await makeProxyRequest({
+// With custom headers (e.g. Notion requires Notion-Version)
+const result = await makeProxyRequest({
   appSlug: "notion",
   method: "POST",
   url: "https://api.notion.com/v1/search",
@@ -123,10 +118,9 @@ const page = await makeProxyRequest({
 
 ### Key Details
 
-- **Auth is automatic.** The proxy looks up the user's connected account and injects their credentials (OAuth token, API key, etc.) into the upstream request. You never handle tokens yourself.
-- **Custom headers** must use the `x-pd-proxy-` prefix when calling the proxy REST API directly. The `makeProxyRequest()` helper handles this for you.
-- **App slugs** determine which account to use. The slug matches the Pipedream app name (e.g. `slack_v2`, `github`, `notion`, `google_sheets`, `linear`, `jira`).
-- **Any API is supported** as long as Pipedream has an integration for that app. The proxy works with 2,000+ apps.
+- **Auth is automatic.** The proxy injects the user's OAuth token or API key into the upstream request.
+- **App slugs** determine which account to use: `slack_v2`, `github`, `notion`, `google_sheets`, `linear_app`, `jira`, etc.
+- **Any API is supported** as long as Pipedream has an integration for that app (2,000+ apps).
 - **Rate limits:** 1,000 requests per 5 minutes per project. 30-second timeout per request.
 
 ### Common App Slugs and Base URLs
@@ -138,13 +132,9 @@ const page = await makeProxyRequest({
 | Notion | `notion` | `https://api.notion.com/v1/` |
 | Google Sheets | `google_sheets` | `https://sheets.googleapis.com/v4/` |
 | Linear | `linear_app` | `https://api.linear.app/` |
-| Jira | `jira` | (uses relative paths — dynamic domain) |
 | Airtable | `airtable_oauth` | `https://api.airtable.com/v0/` |
 | HubSpot | `hubspot` | `https://api.hubapi.com/` |
 | Stripe | `stripe` | `https://api.stripe.com/v1/` |
-| Twilio | `twilio` | `https://api.twilio.com/` |
-
-For apps with dynamic domains (Jira, GitLab, Zendesk), use **relative paths** instead of full URLs — the proxy resolves the domain from the user's account.
 
 ## Security
 

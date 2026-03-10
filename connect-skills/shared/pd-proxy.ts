@@ -89,10 +89,18 @@ export async function makeProxyRequest(opts: ProxyRequestOpts): Promise<unknown>
   const fetchOpts: RequestInit = { method: opts.method, headers: fetchHeaders };
   if (opts.body) fetchOpts.body = JSON.stringify(opts.body);
 
-  const resp = await fetch(proxyUrl, fetchOpts);
-  const text = await resp.text();
-  if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${text}`);
-  try { return JSON.parse(text); } catch { return text; }
+  const maxRetries = 2;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const resp = await fetch(proxyUrl, fetchOpts);
+    const text = await resp.text();
+    if (resp.status === 504 && attempt < maxRetries) {
+      await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
+      continue;
+    }
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${text}`);
+    try { return JSON.parse(text); } catch { return text; }
+  }
+  throw new Error("Max retries exceeded");
 }
 
 export function parseFlags(argv: string[]): { command: string; flags: Record<string, string>; positional: string[] } {

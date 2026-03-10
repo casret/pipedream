@@ -20,7 +20,7 @@ npx tsx resources/pd-slack.ts <command> [flags]
 | `triage` | Recent messages summary | `--channel` ✓, `--limit` |
 | `threads` | Active threads | `--channel` ✓, `--limit` |
 | `search` | Search messages | `--query` ✓, `--limit` |
-| `channels` | List channels | `--types`, `--limit` |
+| `channels` | List channels | `--types` (public_channel,private_channel), `--limit` |
 | `find-channel` | Find channel by name | `--name` ✓ |
 | `users` | List users | `--limit` |
 | `find-user` | Find user by name or email | `--name` or `--email` ✓ |

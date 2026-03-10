@@ -1,0 +1,1 @@
+../../pd-slack/resources/pd-slack.ts

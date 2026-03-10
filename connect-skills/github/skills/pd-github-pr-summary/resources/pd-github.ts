@@ -1,0 +1,1 @@
+../../pd-github/resources/pd-github.ts
